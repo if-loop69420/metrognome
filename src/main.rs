@@ -6,6 +6,8 @@ use std::thread;
 use std::time::Duration;
 
 mod metronome {
+    use std::{collections::VecDeque, ops::Range, sync::Arc};
+
     use super::*;
     #[derive(Clone)]
     pub struct TimeSignature {
@@ -104,8 +106,51 @@ mod metronome {
             }
         }
 
-        fn find_common_denominator(signatures: Vec<Signature>) -> u8 {
-            let denominators = signatures.iter().map(|x| x.bottom).collect();
+        // Go through the multiples of the largest number. Check if all smaller number multiples contain the current number  multiple.
+        // If that is the case we have found the least common denominator
+        fn find_least_common_denominator(signatures: Vec<TimeSignature>) -> u8 {
+            let mut denominators: Vec<u8> = signatures.iter().map(|x| x.bottom).collect();
+            denominators.sort();
+            let mut denominators: VecDeque<u8> = VecDeque::from(denominators);
+
+            let largest_denominator = denominators.pop_back().unwrap();
+
+            let mut current_number = largest_denominator;
+
+            loop {
+                // Get multiples for all smaller denominators up to the current number.
+                // Check if current number is contained in all multiples
+                // If it is contained return the common denominator
+                // Else continue
+                let multiples: Vec<Vec<u8>> = denominators
+                    .iter()
+                    .map(|&x: &u8| (x..current_number).step_by(x as usize).collect())
+                    .collect();
+
+                if multiples
+                    .iter()
+                    .map(|x| x.contains(&current_number))
+                    .fold(true, |acc, x| acc && x)
+                {
+                    return current_number;
+                }
+                current_number = current_number
+                    .checked_add(largest_denominator)
+                    .expect("There is no common denominator smaller than 255");
+            }
+        }
+
+        fn transform_to_common_denominator_signature(
+            lcd: u8,
+            signatures: Vec<TimeSignature>,
+        ) -> Vec<TimeSignature> {
+            signatures
+                .iter()
+                .map(|old_sig| {
+                    let factor = lcd / old_sig.bottom;
+                    TimeSignature::new(old_sig.top.checked_mul(factor).expect("Too lorge"), lcd)
+                })
+                .collect()
         }
 
         fn get_duration(self, signature: &TimeSignature) -> Duration {

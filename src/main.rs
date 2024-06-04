@@ -6,7 +6,11 @@ use std::thread;
 use std::time::Duration;
 
 mod metronome {
-    use std::{collections::VecDeque, ops::Range, sync::Arc};
+    use std::{
+        collections::{BTreeSet, HashSet, VecDeque},
+        ops::Range,
+        sync::Arc,
+    };
 
     use super::*;
     #[derive(Clone)]
@@ -94,6 +98,51 @@ mod metronome {
         _stream: Arc<OutputStream>,
     }
 
+    fn find_least_common_denominator(signatures: Vec<TimeSignature>) -> u8 {
+        let mut denominators: Vec<u8> = signatures.iter().map(|x| x.bottom).collect();
+        denominators.sort();
+        let mut denominators: VecDeque<u8> = VecDeque::from(denominators);
+
+        let largest_denominator = denominators.pop_back().unwrap();
+
+        let mut current_number = largest_denominator;
+
+        loop {
+            // Get multiples for all smaller denominators up to the current number.
+            // Check if current number is contained in all multiples
+            // If it is contained return the common denominator
+            // Else continue
+            let multiples: Vec<Vec<u8>> = denominators
+                .iter()
+                .map(|&x: &u8| (x..current_number).step_by(x as usize).collect())
+                .collect();
+
+            if multiples
+                .iter()
+                .map(|x| x.contains(&current_number))
+                .fold(true, |acc, x| acc && x)
+            {
+                return current_number;
+            }
+            current_number = current_number
+                .checked_add(largest_denominator)
+                .expect("There is no common denominator smaller than 255");
+        }
+    }
+
+    fn transform_to_common_denominator_signature(
+        lcd: u8,
+        signatures: Vec<TimeSignature>,
+    ) -> Vec<TimeSignature> {
+        signatures
+            .iter()
+            .map(|old_sig| {
+                let factor = lcd / old_sig.bottom;
+                TimeSignature::new(old_sig.top.checked_mul(factor).expect("Too lorge"), lcd)
+            })
+            .collect()
+    }
+
     impl PolyrythmicMetronome {
         pub fn new(bpm: u8, signatures: Vec<TimeSignature>) -> Self {
             let (stream, stream_handle) = OutputStream::try_default().unwrap();
@@ -106,70 +155,27 @@ mod metronome {
             }
         }
 
-        // Go through the multiples of the largest number. Check if all smaller number multiples contain the current number  multiple.
-        // If that is the case we have found the least common denominator
-        fn find_least_common_denominator(signatures: Vec<TimeSignature>) -> u8 {
-            let mut denominators: Vec<u8> = signatures.iter().map(|x| x.bottom).collect();
-            denominators.sort();
-            let mut denominators: VecDeque<u8> = VecDeque::from(denominators);
+        fn get_durations(self) -> BTreeSet<Duration> {
+            let lcd = find_least_common_denominator(self.signatures);
+            let lcd_as_f64 = lcd as f64;
+            let bpm_as_f64 = self.bpm as f64;
+            let single_note_length = (60.0f64 / bpm_as_f64) * (4.0f64 / lcd_as_f64);
+            let signatures = transform_to_common_denominator_signature(lcd, self.signatures);
 
-            let largest_denominator = denominators.pop_back().unwrap();
-
-            let mut current_number = largest_denominator;
-
-            loop {
-                // Get multiples for all smaller denominators up to the current number.
-                // Check if current number is contained in all multiples
-                // If it is contained return the common denominator
-                // Else continue
-                let multiples: Vec<Vec<u8>> = denominators
-                    .iter()
-                    .map(|&x: &u8| (x..current_number).step_by(x as usize).collect())
-                    .collect();
-
-                if multiples
-                    .iter()
-                    .map(|x| x.contains(&current_number))
-                    .fold(true, |acc, x| acc && x)
-                {
-                    return current_number;
-                }
-                current_number = current_number
-                    .checked_add(largest_denominator)
-                    .expect("There is no common denominator smaller than 255");
-            }
-        }
-
-        fn transform_to_common_denominator_signature(
-            lcd: u8,
-            signatures: Vec<TimeSignature>,
-        ) -> Vec<TimeSignature> {
+            // Go through all Signatures.
+            // Calculate the lenght of each note, that should be played note_length = (signature.bottom / signature.top) * single_note_length
+            // Calculate when the note should be played (0..lcd).step_by(note_length)
+            // Fold all of the time_points into a BTreeSet to avoid duplicates
             signatures
                 .iter()
-                .map(|old_sig| {
-                    let factor = lcd / old_sig.bottom;
-                    TimeSignature::new(old_sig.top.checked_mul(factor).expect("Too lorge"), lcd)
+                .map(|x| {
+                    let note_length = (x.bottom / x.top) as f64 * single_note_length;
+                    let mut time_points: Vec<f64> = Vec::new();
+                    let mut current_time = 0;
+                    loop {}
                 })
+                .flatten()
                 .collect()
-        }
-
-        fn get_duration(self, signature: &TimeSignature) -> Duration {
-            let bpm_as_f64 = self.bpm as f64;
-            let note_factor = 4.0f64 / signature.bottom as f64;
-            let quarter_duration = 60.0f64 / bpm_as_f64;
-            let note_duration = quarter_duration * note_factor;
-            Duration::from_secs_f64(note_duration)
-        }
-
-        fn get_durations(self) -> Vec<Duration> {
-            self.signatures
-                .iter()
-                .map(|x| self.clone().get_duration(x))
-                .collect()
-        }
-
-        fn get_repeats(self) -> Vec<u8> {
-            self.signatures.iter().map(|x| x.top).collect()
         }
 
         // Figure out how to run multiple metronomes over one another

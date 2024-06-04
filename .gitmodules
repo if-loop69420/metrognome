@@ -1,0 +1,3 @@
+[submodule "rs-dev-flake"]
+	path = rs-dev-flake
+	url = git@github.com:if-loop69420/rs-dev-flake.git
